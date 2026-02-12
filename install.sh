@@ -6,6 +6,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="/opt/200ok"
 SERVICE_NAME="200ok"
 SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
+ENV_FILE="/etc/default/${SERVICE_NAME}"
 RUN_USER="proxy200ok"
 
 LISTEN_HOST="0.0.0.0"
@@ -74,6 +75,13 @@ fi
 mkdir -p "$INSTALL_DIR"
 install -m 0644 "${REPO_DIR}/${SRC_SCRIPT}" "${INSTALL_DIR}/${SRC_SCRIPT}"
 
+cat > "$ENV_FILE" <<EOF
+LISTEN_HOST=${LISTEN_HOST}
+LISTEN_PORT=${LISTEN_PORT}
+TARGET_HOST=${TARGET_HOST}
+TARGET_PORT=${TARGET_PORT}
+EOF
+
 cat > "$SERVICE_PATH" <<EOF
 [Unit]
 Description=HTTP 200 Proxy (200ok) - ${MODE}
@@ -84,10 +92,7 @@ Type=simple
 User=${RUN_USER}
 Group=${RUN_USER}
 WorkingDirectory=${INSTALL_DIR}
-Environment="LISTEN_HOST=${LISTEN_HOST}"
-Environment="LISTEN_PORT=${LISTEN_PORT}"
-Environment="TARGET_HOST=${TARGET_HOST}"
-Environment="TARGET_PORT=${TARGET_PORT}"
+EnvironmentFile=-${ENV_FILE}
 ExecStart=/usr/bin/python3 ${INSTALL_DIR}/${SRC_SCRIPT}
 Restart=always
 RestartSec=2
@@ -114,5 +119,6 @@ echo ""
 echo "Instalado: ${SERVICE_NAME} (${MODE})"
 echo "- Listen: ${LISTEN_HOST}:${LISTEN_PORT}"
 echo "- Target: ${TARGET_HOST}:${TARGET_PORT}"
+echo "- Config: ${ENV_FILE}"
 echo "- Estado: systemctl status ${SERVICE_NAME} --no-pager"
 echo "- Logs:   journalctl -u ${SERVICE_NAME} -f"

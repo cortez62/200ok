@@ -25,6 +25,15 @@ cd 200ok
 
 2) Instala y habilita el servicio.
 
+### Instalación interactiva (menú)
+
+En el VPS:
+
+```bash
+cd 200ok
+sudo bash menu.sh
+```
+
 - Modo **asyncio** (usa `pythonCortez.py`) — **por defecto**:
 
 ```bash
