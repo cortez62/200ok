@@ -28,12 +28,10 @@ En el VPS:
 
 ```bash
 cd 200ok
-sudo apt-get update
-sudo apt-get install -y whiptail
 sudo bash menu.sh
 ```
 
-Si no instalas `whiptail`, el script usa un menú simple en texto.
+El menú no requiere dependencias (usa texto/colores en la terminal).
 
 - Modo **asyncio** (usa `pythonCortez.py`) — **por defecto**:
 

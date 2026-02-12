@@ -5,8 +5,23 @@ SERVICE_NAME="200ok"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="/etc/default/${SERVICE_NAME}"
 
-has_whiptail() {
-  command -v whiptail >/dev/null 2>&1
+supports_color() {
+  [[ -t 1 ]] && command -v tput >/dev/null 2>&1
+}
+
+init_colors() {
+  if supports_color; then
+    BOLD="$(tput bold)"
+    DIM="$(tput dim)"
+    RED="$(tput setaf 1)"
+    GREEN="$(tput setaf 2)"
+    YELLOW="$(tput setaf 3)"
+    BLUE="$(tput setaf 4)"
+    CYAN="$(tput setaf 6)"
+    RESET="$(tput sgr0)"
+  else
+    BOLD=""; DIM=""; RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; RESET=""
+  fi
 }
 
 require_root() {
@@ -42,137 +57,15 @@ pause() {
   read -r -p "Enter para continuar..." _
 }
 
-wt_msg() {
-  local title="$1"
-  local msg="$2"
-  whiptail --title "$title" --msgbox "$msg" 10 72
+banner() {
+  echo "${CYAN}${BOLD}=================================================${RESET}"
+  echo "${CYAN}${BOLD}                 200ok - MENU                   ${RESET}"
+  echo "${CYAN}${BOLD}=================================================${RESET}"
 }
 
-wt_textbox_cmd() {
-  local title="$1"
-  local cmd="$2"
-  local tmp
-  tmp="$(mktemp)"
-  bash -c "$cmd" >"$tmp" 2>&1 || true
-  whiptail --title "$title" --textbox "$tmp" 25 90
-  rm -f "$tmp"
-}
-
-install_flow_whiptail() {
-  require_root
+show_current_config_line() {
   read_env_defaults
-
-  local mode_choice
-  mode_choice=$(whiptail --title "200ok" --radiolist "Selecciona modo" 12 72 2 \
-    "asyncio" "pythonCortez.py" ON \
-    "threaded" "http_200_stream_dropbear.py" OFF \
-    3>&1 1>&2 2>&3) || return
-
-  local listen_port
-  listen_port=$(whiptail --title "200ok" --inputbox "LISTEN_PORT" 10 72 "$LISTEN_PORT" 3>&1 1>&2 2>&3) || return
-  if ! validate_port "$listen_port"; then
-    wt_msg "Error" "Puerto invalido: $listen_port"
-    return
-  fi
-
-  local target_host
-  target_host=$(whiptail --title "200ok" --inputbox "TARGET_HOST" 10 72 "$TARGET_HOST" 3>&1 1>&2 2>&3) || return
-
-  local target_port
-  target_port=$(whiptail --title "200ok" --inputbox "TARGET_PORT" 10 72 "$TARGET_PORT" 3>&1 1>&2 2>&3) || return
-  if ! validate_port "$target_port"; then
-    wt_msg "Error" "Puerto invalido: $target_port"
-    return
-  fi
-
-  wt_textbox_cmd "Instalando" "echo 'Ejecutando install.sh...'; echo; bash '${REPO_DIR}/install.sh' '${mode_choice}' '${listen_port}' '${target_host}' '${target_port}'; echo; echo 'Listo.'"
-}
-
-config_flow_whiptail() {
-  require_root
-  read_env_defaults
-
-  if [[ ! -f "$ENV_FILE" ]]; then
-    wt_msg "200ok" "No existe ${ENV_FILE}. Ejecuta primero la instalación."
-    return
-  fi
-
-  local listen_host
-  listen_host=$(whiptail --title "200ok" --inputbox "LISTEN_HOST" 10 72 "$LISTEN_HOST" 3>&1 1>&2 2>&3) || return
-
-  local listen_port
-  listen_port=$(whiptail --title "200ok" --inputbox "LISTEN_PORT" 10 72 "$LISTEN_PORT" 3>&1 1>&2 2>&3) || return
-  if ! validate_port "$listen_port"; then
-    wt_msg "Error" "Puerto invalido: $listen_port"
-    return
-  fi
-
-  local target_host
-  target_host=$(whiptail --title "200ok" --inputbox "TARGET_HOST" 10 72 "$TARGET_HOST" 3>&1 1>&2 2>&3) || return
-
-  local target_port
-  target_port=$(whiptail --title "200ok" --inputbox "TARGET_PORT" 10 72 "$TARGET_PORT" 3>&1 1>&2 2>&3) || return
-  if ! validate_port "$target_port"; then
-    wt_msg "Error" "Puerto invalido: $target_port"
-    return
-  fi
-
-  cat > "$ENV_FILE" <<EOF
-LISTEN_HOST=${listen_host}
-LISTEN_PORT=${listen_port}
-TARGET_HOST=${target_host}
-TARGET_PORT=${target_port}
-EOF
-
-  systemctl daemon-reload
-  systemctl restart "$SERVICE_NAME" || true
-
-  wt_msg "200ok" "Config actualizada y servicio reiniciado."
-}
-
-service_status_whiptail() {
-  wt_textbox_cmd "Estado ${SERVICE_NAME}" "systemctl status '${SERVICE_NAME}' --no-pager"
-}
-
-service_logs_whiptail() {
-  wt_textbox_cmd "Logs ${SERVICE_NAME} (ultimas 200 lineas)" "journalctl -u '${SERVICE_NAME}' -n 200 --no-pager"
-}
-
-service_restart_whiptail() {
-  require_root
-  wt_textbox_cmd "Reiniciando" "systemctl restart '${SERVICE_NAME}'; echo; systemctl status '${SERVICE_NAME}' --no-pager"
-}
-
-uninstall_flow_whiptail() {
-  require_root
-  if whiptail --title "200ok" --yesno "Seguro que quieres desinstalar?" 10 72; then
-    wt_textbox_cmd "Desinstalando" "bash '${REPO_DIR}/uninstall.sh'"
-  fi
-}
-
-main_menu_whiptail() {
-  while true; do
-    local opt
-    opt=$(whiptail --title "200ok" --menu "Selecciona una opción" 16 72 7 \
-      "1" "Instalar / Actualizar" \
-      "2" "Cambiar config (host/puertos)" \
-      "3" "Estado del servicio" \
-      "4" "Ver logs (ultimas 200 lineas)" \
-      "5" "Reiniciar servicio" \
-      "6" "Desinstalar" \
-      "0" "Salir" \
-      3>&1 1>&2 2>&3) || exit 0
-
-    case "$opt" in
-      1) install_flow_whiptail ;;
-      2) config_flow_whiptail ;;
-      3) service_status_whiptail ;;
-      4) service_logs_whiptail ;;
-      5) service_restart_whiptail ;;
-      6) uninstall_flow_whiptail ;;
-      0) exit 0 ;;
-    esac
-  done
+  echo "${DIM}Listen:${RESET} ${LISTEN_HOST}:${LISTEN_PORT}   ${DIM}Target:${RESET} ${TARGET_HOST}:${TARGET_PORT}"
 }
 
 install_flow() {
@@ -298,26 +191,33 @@ uninstall_flow() {
 }
 
 main_menu() {
+  init_colors
   while true; do
+    clear || true
+    banner
+    show_current_config_line
     echo ""
-    echo "==========================="
-    echo "  200ok - Menu"
-    echo "==========================="
-    echo "[1] Instalar / Actualizar"
-    echo "[2] Cambiar config (puertos/host)"
-    echo "[3] Estado del servicio"
-    echo "[4] Ver logs (Ctrl+C para salir)"
-    echo "[5] Reiniciar servicio"
-    echo "[6] Desinstalar"
-    echo "[0] Salir"
+    echo "${YELLOW}[1]${RESET} Instalar / Actualizar"
+    echo "${YELLOW}[2]${RESET} Cambiar config (host/puertos)"
+    echo "${YELLOW}[3]${RESET} Estado del servicio"
+    echo "${YELLOW}[4]${RESET} Ver logs (ultimas 200 lineas)"
+    echo "${YELLOW}[5]${RESET} Reiniciar servicio"
+    echo "${YELLOW}[6]${RESET} Desinstalar"
+    echo "${YELLOW}[0]${RESET} Salir"
     echo ""
-    read -r -p "> Opcion: " opt
+    read -r -p "${BOLD}> Opcion:${RESET} " opt
 
     case "${opt:-}" in
       1) install_flow ;;
       2) config_flow ;;
       3) service_status ;;
-      4) service_logs ;;
+      4)
+        clear || true
+        echo "${CYAN}${BOLD}Logs ${SERVICE_NAME} (ultimas 200 lineas)${RESET}"
+        echo ""
+        journalctl -u "$SERVICE_NAME" -n 200 --no-pager || true
+        pause
+        ;;
       5) service_restart ;;
       6) uninstall_flow ;;
       0) exit 0 ;;
@@ -326,11 +226,4 @@ main_menu() {
   done
 }
 
-if has_whiptail; then
-  main_menu_whiptail
-else
-  echo ""
-  echo "whiptail no está instalado; usando menú simple."
-  echo "En Ubuntu/Debian puedes instalarlo con: apt-get install -y whiptail"
-  main_menu
-fi
+main_menu
