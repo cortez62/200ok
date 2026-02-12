@@ -5,6 +5,10 @@ SERVICE_NAME="200ok"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="/etc/default/${SERVICE_NAME}"
 
+has_whiptail() {
+  command -v whiptail >/dev/null 2>&1
+}
+
 require_root() {
   if [[ $EUID -ne 0 ]]; then
     echo "Ejecuta como root: sudo bash menu.sh"
@@ -36,6 +40,139 @@ validate_port() {
 pause() {
   echo ""
   read -r -p "Enter para continuar..." _
+}
+
+wt_msg() {
+  local title="$1"
+  local msg="$2"
+  whiptail --title "$title" --msgbox "$msg" 10 72
+}
+
+wt_textbox_cmd() {
+  local title="$1"
+  local cmd="$2"
+  local tmp
+  tmp="$(mktemp)"
+  bash -c "$cmd" >"$tmp" 2>&1 || true
+  whiptail --title "$title" --textbox "$tmp" 25 90
+  rm -f "$tmp"
+}
+
+install_flow_whiptail() {
+  require_root
+  read_env_defaults
+
+  local mode_choice
+  mode_choice=$(whiptail --title "200ok" --radiolist "Selecciona modo" 12 72 2 \
+    "asyncio" "pythonCortez.py" ON \
+    "threaded" "http_200_stream_dropbear.py" OFF \
+    3>&1 1>&2 2>&3) || return
+
+  local listen_port
+  listen_port=$(whiptail --title "200ok" --inputbox "LISTEN_PORT" 10 72 "$LISTEN_PORT" 3>&1 1>&2 2>&3) || return
+  if ! validate_port "$listen_port"; then
+    wt_msg "Error" "Puerto invalido: $listen_port"
+    return
+  fi
+
+  local target_host
+  target_host=$(whiptail --title "200ok" --inputbox "TARGET_HOST" 10 72 "$TARGET_HOST" 3>&1 1>&2 2>&3) || return
+
+  local target_port
+  target_port=$(whiptail --title "200ok" --inputbox "TARGET_PORT" 10 72 "$TARGET_PORT" 3>&1 1>&2 2>&3) || return
+  if ! validate_port "$target_port"; then
+    wt_msg "Error" "Puerto invalido: $target_port"
+    return
+  fi
+
+  wt_textbox_cmd "Instalando" "echo 'Ejecutando install.sh...'; echo; bash '${REPO_DIR}/install.sh' '${mode_choice}' '${listen_port}' '${target_host}' '${target_port}'; echo; echo 'Listo.'"
+}
+
+config_flow_whiptail() {
+  require_root
+  read_env_defaults
+
+  if [[ ! -f "$ENV_FILE" ]]; then
+    wt_msg "200ok" "No existe ${ENV_FILE}. Ejecuta primero la instalación."
+    return
+  fi
+
+  local listen_host
+  listen_host=$(whiptail --title "200ok" --inputbox "LISTEN_HOST" 10 72 "$LISTEN_HOST" 3>&1 1>&2 2>&3) || return
+
+  local listen_port
+  listen_port=$(whiptail --title "200ok" --inputbox "LISTEN_PORT" 10 72 "$LISTEN_PORT" 3>&1 1>&2 2>&3) || return
+  if ! validate_port "$listen_port"; then
+    wt_msg "Error" "Puerto invalido: $listen_port"
+    return
+  fi
+
+  local target_host
+  target_host=$(whiptail --title "200ok" --inputbox "TARGET_HOST" 10 72 "$TARGET_HOST" 3>&1 1>&2 2>&3) || return
+
+  local target_port
+  target_port=$(whiptail --title "200ok" --inputbox "TARGET_PORT" 10 72 "$TARGET_PORT" 3>&1 1>&2 2>&3) || return
+  if ! validate_port "$target_port"; then
+    wt_msg "Error" "Puerto invalido: $target_port"
+    return
+  fi
+
+  cat > "$ENV_FILE" <<EOF
+LISTEN_HOST=${listen_host}
+LISTEN_PORT=${listen_port}
+TARGET_HOST=${target_host}
+TARGET_PORT=${target_port}
+EOF
+
+  systemctl daemon-reload
+  systemctl restart "$SERVICE_NAME" || true
+
+  wt_msg "200ok" "Config actualizada y servicio reiniciado."
+}
+
+service_status_whiptail() {
+  wt_textbox_cmd "Estado ${SERVICE_NAME}" "systemctl status '${SERVICE_NAME}' --no-pager"
+}
+
+service_logs_whiptail() {
+  wt_textbox_cmd "Logs ${SERVICE_NAME} (ultimas 200 lineas)" "journalctl -u '${SERVICE_NAME}' -n 200 --no-pager"
+}
+
+service_restart_whiptail() {
+  require_root
+  wt_textbox_cmd "Reiniciando" "systemctl restart '${SERVICE_NAME}'; echo; systemctl status '${SERVICE_NAME}' --no-pager"
+}
+
+uninstall_flow_whiptail() {
+  require_root
+  if whiptail --title "200ok" --yesno "Seguro que quieres desinstalar?" 10 72; then
+    wt_textbox_cmd "Desinstalando" "bash '${REPO_DIR}/uninstall.sh'"
+  fi
+}
+
+main_menu_whiptail() {
+  while true; do
+    local opt
+    opt=$(whiptail --title "200ok" --menu "Selecciona una opción" 16 72 7 \
+      "1" "Instalar / Actualizar" \
+      "2" "Cambiar config (host/puertos)" \
+      "3" "Estado del servicio" \
+      "4" "Ver logs (ultimas 200 lineas)" \
+      "5" "Reiniciar servicio" \
+      "6" "Desinstalar" \
+      "0" "Salir" \
+      3>&1 1>&2 2>&3) || exit 0
+
+    case "$opt" in
+      1) install_flow_whiptail ;;
+      2) config_flow_whiptail ;;
+      3) service_status_whiptail ;;
+      4) service_logs_whiptail ;;
+      5) service_restart_whiptail ;;
+      6) uninstall_flow_whiptail ;;
+      0) exit 0 ;;
+    esac
+  done
 }
 
 install_flow() {
@@ -189,4 +326,11 @@ main_menu() {
   done
 }
 
-main_menu
+if has_whiptail; then
+  main_menu_whiptail
+else
+  echo ""
+  echo "whiptail no está instalado; usando menú simple."
+  echo "En Ubuntu/Debian puedes instalarlo con: apt-get install -y whiptail"
+  main_menu
+fi
