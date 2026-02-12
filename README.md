@@ -1,7 +1,4 @@
 # 200ok
-<<<<<<< HEAD
-Instala y habilita el servicio.
-=======
 
 Dos scripts de proxy/túnel TCP que responden `HTTP/1.1 200 OK` y luego reenvían tráfico hacia un destino local (por defecto `127.0.0.1:22`).
 
@@ -19,7 +16,7 @@ Este repo incluye un instalador para **Ubuntu/Debian** que configura un **servic
 ```bash
 apt-get update
 apt-get install -y git
-git clone <TU_URL_DE_GITHUB> 200ok
+git clone https://github.com/cortez62/200ok.git 200ok
 cd 200ok
 ```
 
@@ -110,4 +107,3 @@ sudo bash uninstall.sh
 - **Solo puede correr un modo a la vez**, porque ambos scripts escuchan en el **puerto 80**.
 - El servicio corre como usuario no-root (`proxy200ok`) y usa capability `CAP_NET_BIND_SERVICE` para poder bindear el puerto 80.
 - Cambios de puertos/hosts se hacen editando el script que estés usando y reiniciando el servicio.
->>>>>>> eae2492 (Initial commit)
