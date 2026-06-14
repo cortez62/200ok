@@ -157,7 +157,7 @@ class AsyncProxy:
         )
 
         print(f"""
-🚀 HTTP 200 Proxy — ASYNCIO (KEEPALIVE REAL)
+HTTP 200 Proxy — ASYNCIO (KEEPALIVE REAL)
 ✔ recv(4096) + 200 OK
 ✔ Sin illegal packet size
 ✔ Sin reset en subida
