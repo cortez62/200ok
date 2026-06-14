@@ -66,7 +66,7 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y python3 ca-certificates
+apt-get install -y python3.8 ca-certificates
 
 if ! id -u "$RUN_USER" >/dev/null 2>&1; then
   useradd --system --no-create-home --shell /usr/sbin/nologin "$RUN_USER"
@@ -93,7 +93,7 @@ User=${RUN_USER}
 Group=${RUN_USER}
 WorkingDirectory=${INSTALL_DIR}
 EnvironmentFile=-${ENV_FILE}
-ExecStart=/usr/bin/python3 ${INSTALL_DIR}/${SRC_SCRIPT}
+ExecStart=/usr/bin/python3.8 ${INSTALL_DIR}/${SRC_SCRIPT}
 Restart=always
 RestartSec=2
 
