@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-🚀 Proxy Asyncio — Inyección COMPATIBLE (recv 4096)
-✔ Método de inyección IGUAL al script select/hilos
-✔ Sin illegal packet size
-✔ Sin tocar velocidad
-✔ KeepAlive TCP REAL (anti reset en subida)
-✔ Ultra estable
+Proxy Asyncio — Inyección COMPATIBLE (recv 4096)
+Método de inyección IGUAL al script select/hilos
+Sin illegal packet size
+Sin tocar velocidad
+KeepAlive TCP REAL (anti reset en subida)
+Ultra estable
 """
 
 import asyncio
@@ -35,7 +35,7 @@ HEAD = (
 
 
 def apply_keepalive(sock):
-    """🔥 KEEPALIVE REAL A NIVEL KERNEL (NO CPU)"""
+    """ KEEPALIVE REAL A NIVEL KERNEL (NO CPU)"""
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
 
