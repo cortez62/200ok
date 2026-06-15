@@ -9,7 +9,7 @@ LISTEN_HOST = os.getenv("LISTEN_HOST", "0.0.0.0")
 LISTEN_PORT = int(os.getenv("LISTEN_PORT", "80"))
 
 TARGET_HOST = os.getenv("TARGET_HOST", "127.0.0.1")
-TARGET_PORT = int(os.getenv("TARGET_PORT", "22"))
+TARGET_PORT = int(os.getenv("TARGET_PORT", "8080"))
 
 BUFFER_SIZE = 65536
 
@@ -66,15 +66,21 @@ class AsyncProxy:
         target_writer = None
 
         if not peer:
-            writer.close()
-            await writer.wait_closed()
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
             return
 
         async with self.lock:
             if self.clients >= MAX_CLIENTS:
                 print(f"[LIMIT] {peer} rechazado ({self.clients}/{MAX_CLIENTS})")
-                writer.close()
-                await writer.wait_closed()
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except Exception:
+                    pass
                 return
 
             self.clients += 1
@@ -86,7 +92,6 @@ class AsyncProxy:
             if client_sock:
                 tune_socket(client_sock)
 
-            # Leer payload inicial del cliente
             try:
                 data = await asyncio.wait_for(reader.read(4096), timeout=8)
                 if not data:
@@ -97,35 +102,28 @@ class AsyncProxy:
             except Exception:
                 return
 
-            # Responder 200 OK
             writer.write(HEAD.encode())
             await writer.drain()
 
-            # Conectar al SSH / destino local
             target_reader, target_writer = await asyncio.wait_for(
                 asyncio.open_connection(TARGET_HOST, TARGET_PORT),
                 timeout=15
             )
 
-            ssh_sock = target_writer.get_extra_info("socket")
-            if ssh_sock:
-                tune_socket(ssh_sock)
-
-            # Enviar al SSH lo que llegó después de la cabecera HTTP
-            # Esto evita perder datos iniciales si vienen pegados al payload.
-            # Normalmente SSH espera su handshake, así que solo hacemos pipe normal.
+            target_sock = target_writer.get_extra_info("socket")
+            if target_sock:
+                tune_socket(target_sock)
 
             up = asyncio.create_task(
-                self.pipe(reader, target_writer, f"{peer} CLIENTE->SSH")
+                self.pipe(reader, target_writer, f"{peer} CLIENTE->TARGET")
             )
 
             down = asyncio.create_task(
-                self.pipe(target_reader, writer, f"{peer} SSH->CLIENTE")
+                self.pipe(target_reader, writer, f"{peer} TARGET->CLIENTE")
             )
 
             done, pending = await asyncio.wait(
                 [up, down],
-                timeout=TIMEOUT,
                 return_when=asyncio.FIRST_COMPLETED
             )
 
@@ -165,7 +163,10 @@ class AsyncProxy:
     async def pipe(self, reader, writer, label):
         try:
             while True:
-                data = await asyncio.wait_for(reader.read(BUFFER_SIZE), timeout=TIMEOUT)
+                data = await asyncio.wait_for(
+                    reader.read(BUFFER_SIZE),
+                    timeout=TIMEOUT
+                )
 
                 if not data:
                     break
@@ -192,13 +193,13 @@ class AsyncProxy:
         )
 
         print(f"""
-HTTP 200 Proxy — ASYNCIO ESTABLE
-✔ Listen: {LISTEN_HOST}:{LISTEN_PORT}
-✔ Target: {TARGET_HOST}:{TARGET_PORT}
-✔ Clientes globales: {MAX_CLIENTS}
-✔ Timeout: {TIMEOUT}s
-✔ Backlog: {BACKLOG}
-✔ Buffer: {BUFFER_SIZE // 1024} KB
+HTTP 200 Proxy - ASYNCIO ESTABLE
+Listen: {LISTEN_HOST}:{LISTEN_PORT}
+Target: {TARGET_HOST}:{TARGET_PORT}
+Clientes globales: {MAX_CLIENTS}
+Timeout: {TIMEOUT}s
+Backlog: {BACKLOG}
+Buffer: {BUFFER_SIZE // 1024} KB
 """)
 
         async with server:
