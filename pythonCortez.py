@@ -1,49 +1,59 @@
 #!/usr/bin/env python3
-"""
-Método de inyección IGUAL al script select/hilos
-Sin illegal packet size
-Sin tocar velocidad
-KeepAlive TCP REAL (anti reset en subida)
-Ultra estable
-"""
-
 import asyncio
 import os
 import socket
 import sys
 
 # ================= CONFIG =================
-# Se pueden sobreescribir con variables de entorno:
-# LISTEN_HOST, LISTEN_PORT, TARGET_HOST, TARGET_PORT
 LISTEN_HOST = os.getenv("LISTEN_HOST", "0.0.0.0")
 LISTEN_PORT = int(os.getenv("LISTEN_PORT", "80"))
+
 TARGET_HOST = os.getenv("TARGET_HOST", "127.0.0.1")
 TARGET_PORT = int(os.getenv("TARGET_PORT", "22"))
 
 BUFFER_SIZE = 65536
-MAX_CLIENTS = 70
-TIMEOUT = 60
 
-# === RESPONSE EXACTO (NO CAMBIAR) ===
+# GLOBAL PARA TODOS LOS USUARIOS
+MAX_CLIENTS = 80
+
+TIMEOUT = 120
+BACKLOG = 100
+
 HEAD = (
     "HTTP/1.1 200 OK\r\n"
     "Server: Linear-650KBps\r\n"
     "Connection: keep-alive\r\n\r\n"
 )
-# ===================================
 
 
 def apply_keepalive(sock):
-    """ KEEPALIVE REAL A NIVEL KERNEL (NO CPU)"""
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
 
-        # Linux keepalive tuning
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 30)
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+        try:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 30)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+        except Exception:
+            pass
+
     except Exception:
         pass
+
+
+def tune_socket(sock):
+    try:
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    except Exception:
+        pass
+
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 524288)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 524288)
+    except Exception:
+        pass
+
+    apply_keepalive(sock)
 
 
 class AsyncProxy:
@@ -53,70 +63,80 @@ class AsyncProxy:
 
     async def handle_client(self, reader, writer):
         peer = writer.get_extra_info("peername")
+        target_writer = None
+
         if not peer:
             writer.close()
+            await writer.wait_closed()
             return
 
         async with self.lock:
             if self.clients >= MAX_CLIENTS:
+                print(f"[LIMIT] {peer} rechazado ({self.clients}/{MAX_CLIENTS})")
                 writer.close()
+                await writer.wait_closed()
                 return
+
             self.clients += 1
 
         print(f"[+] {peer} conectado ({self.clients}/{MAX_CLIENTS})")
 
         try:
-            # ================= INYECCIÓN CORRECTA =================
-            try:
-                data = await asyncio.wait_for(
-                    reader.read(4096),   # EXACTO como client.recv(4096)
-                    timeout=5
-                )
-                if not data:
-                    return
-            except:
-                return
-
-            writer.write(HEAD.encode())
-            await writer.drain()
-            # ======================================================
-
-            # Conectar al SSH
-            target_reader, target_writer = await asyncio.open_connection(
-                TARGET_HOST, TARGET_PORT
-            )
-
-            # ====== TCP TUNING + KEEPALIVE (CLIENTE) ======
             client_sock = writer.get_extra_info("socket")
             if client_sock:
-                client_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                client_sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 524288)
-                client_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 524288)
-                apply_keepalive(client_sock)
+                tune_socket(client_sock)
 
-            # ====== TCP TUNING + KEEPALIVE (SSH) ======
+            # Leer payload inicial del cliente
+            try:
+                data = await asyncio.wait_for(reader.read(4096), timeout=8)
+                if not data:
+                    return
+            except asyncio.TimeoutError:
+                print(f"[TIMEOUT] {peer} no envio payload inicial")
+                return
+            except Exception:
+                return
+
+            # Responder 200 OK
+            writer.write(HEAD.encode())
+            await writer.drain()
+
+            # Conectar al SSH / destino local
+            target_reader, target_writer = await asyncio.wait_for(
+                asyncio.open_connection(TARGET_HOST, TARGET_PORT),
+                timeout=15
+            )
+
             ssh_sock = target_writer.get_extra_info("socket")
             if ssh_sock:
-                ssh_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                ssh_sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 524288)
-                ssh_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 524288)
-                apply_keepalive(ssh_sock)
+                tune_socket(ssh_sock)
 
-            # Forward bidireccional NATIVO (SIN CAMBIOS)
+            # Enviar al SSH lo que llegó después de la cabecera HTTP
+            # Esto evita perder datos iniciales si vienen pegados al payload.
+            # Normalmente SSH espera su handshake, así que solo hacemos pipe normal.
+
             up = asyncio.create_task(
-                self.pipe(reader, target_writer)
+                self.pipe(reader, target_writer, f"{peer} CLIENTE->SSH")
             )
+
             down = asyncio.create_task(
-                self.pipe(target_reader, writer)
+                self.pipe(target_reader, writer, f"{peer} SSH->CLIENTE")
             )
 
             done, pending = await asyncio.wait(
                 [up, down],
+                timeout=TIMEOUT,
                 return_when=asyncio.FIRST_COMPLETED
             )
 
             for task in pending:
                 task.cancel()
+
+        except asyncio.TimeoutError:
+            print(f"[TIMEOUT] {peer} conexion inactiva")
+
+        except ConnectionResetError:
+            print(f"[RESET] {peer} conexion reseteada")
 
         except Exception as e:
             print(f"[ERR {peer}] {e}")
@@ -124,26 +144,42 @@ class AsyncProxy:
         finally:
             try:
                 writer.close()
-                target_writer.close()
                 await writer.wait_closed()
-                await target_writer.wait_closed()
-            except:
+            except Exception:
                 pass
+
+            if target_writer:
+                try:
+                    target_writer.close()
+                    await target_writer.wait_closed()
+                except Exception:
+                    pass
 
             async with self.lock:
                 self.clients -= 1
+                if self.clients < 0:
+                    self.clients = 0
 
             print(f"[-] {peer} desconectado ({self.clients})")
 
-    async def pipe(self, reader, writer):
+    async def pipe(self, reader, writer, label):
         try:
             while True:
-                data = await reader.read(BUFFER_SIZE)
+                data = await asyncio.wait_for(reader.read(BUFFER_SIZE), timeout=TIMEOUT)
+
                 if not data:
                     break
+
                 writer.write(data)
                 await writer.drain()
-        except:
+
+        except asyncio.TimeoutError:
+            print(f"[TIMEOUT PIPE] {label}")
+
+        except ConnectionResetError:
+            print(f"[RESET PIPE] {label}")
+
+        except Exception:
             pass
 
     async def run(self):
@@ -152,19 +188,17 @@ class AsyncProxy:
             LISTEN_HOST,
             LISTEN_PORT,
             reuse_address=True,
-            backlog=200
+            backlog=BACKLOG
         )
 
         print(f"""
-HTTP 200 Proxy — ASYNCIO (KEEPALIVE REAL)
-✔ recv(4096) + 200 OK
-✔ Sin illegal packet size
-✔ Sin reset en subida
-✔ Sin reconexiones idle
-✔ Bajo CPU
-✔ Clientes: {MAX_CLIENTS}
+HTTP 200 Proxy — ASYNCIO ESTABLE
+✔ Listen: {LISTEN_HOST}:{LISTEN_PORT}
+✔ Target: {TARGET_HOST}:{TARGET_PORT}
+✔ Clientes globales: {MAX_CLIENTS}
+✔ Timeout: {TIMEOUT}s
+✔ Backlog: {BACKLOG}
 ✔ Buffer: {BUFFER_SIZE // 1024} KB
-Puerto: {LISTEN_PORT}
 """)
 
         async with server:
