@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """
-Proxy Asyncio — Inyección COMPATIBLE (recv 4096)
 Método de inyección IGUAL al script select/hilos
 Sin illegal packet size
 Sin tocar velocidad
